@@ -1,3 +1,12 @@
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format=(
+        "%(asctime)s | %(levelname)s | "
+        "%(name)s | %(message)s"
+    ),
+)
+
 from time import perf_counter
 
 from fastapi import FastAPI, HTTPException, Response
@@ -6,6 +15,10 @@ from app.prediction import predict_traffic
 from app.schemas import LogLine, PredictionResponse
 
 from app.config import APP_NAME, APP_VERSION, APP_DESCRIPTION
+
+
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=APP_NAME,
@@ -31,6 +44,7 @@ def predict(log_line: LogLine, response: Response) -> PredictionResponse:
         result = predict_traffic(log_line)
     except Exception as error:
         # Return a controlled response without exposing internal details.
+        logger.exception("Prediction failed")
         raise HTTPException(
             status_code=500,
             detail="Prediction failed",
