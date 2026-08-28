@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+
+# Environment
+.venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/
+
+# Tests
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data
+*.csv

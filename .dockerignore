@@ -1,0 +1,13 @@
+.git
+.gitignore
+.venv
+__pycache__
+.pytest_cache
+*.pyc
+*.ipynb
+
+data
+notebooks
+tests
+benchmarks
+README.md
