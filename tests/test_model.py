@@ -22,7 +22,8 @@ def test_model_artifact_exists():
 
 
 def test_model_artifact_loads():
-    loaded_pipeline = joblib.load(MODEL_PATH)
+    artifact = joblib.load(MODEL_PATH)
+    loaded_pipeline = artifact["pipeline"]
 
     assert hasattr(loaded_pipeline, "predict")
     assert hasattr(loaded_pipeline, "predict_proba")
@@ -50,7 +51,7 @@ def test_probabilities_are_valid():
 
 
 def test_reloaded_pipeline_returns_same_results():
-    loaded_pipeline = joblib.load(MODEL_PATH)
+    loaded_pipeline = joblib.load(MODEL_PATH)["pipeline"]
     model_input = create_input()
 
     original_prediction = pipeline.predict(model_input)
