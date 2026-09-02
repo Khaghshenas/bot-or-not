@@ -21,4 +21,5 @@ __pycache__/
 Thumbs.db
 
 # Data
+data/
 *.csv
