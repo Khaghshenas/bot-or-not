@@ -2,9 +2,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from bot_or_not.api.main import app
 
-from app.config import APP_VERSION
+from bot_or_not.config import APP_VERSION
 
 client = TestClient(app)
 
@@ -108,7 +108,7 @@ def test_internal_error_returns_controlled_500(monkeypatch):
     def failing_prediction(_):
         raise RuntimeError("Sensitive internal information")
 
-    monkeypatch.setattr("app.main.predict_traffic", failing_prediction)
+    monkeypatch.setattr("bot_or_not.api.main.predict_traffic", failing_prediction)
 
     response = client.post("/predict", json=SAMPLE)
 

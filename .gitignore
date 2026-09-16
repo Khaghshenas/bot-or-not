@@ -4,7 +4,6 @@ __pycache__/
 
 # Environment
 .venv/
-.env
 
 # Jupyter
 .ipynb_checkpoints/
@@ -23,3 +22,8 @@ Thumbs.db
 # Data
 data/
 *.csv
+
+# build
+build/
+dist/
+*.egg-info/

@@ -1,0 +1,24 @@
+app:
+  name: "Bot or Not API"
+  version: "1.0.0"
+  description: "API for classifying web traffic as NHT or HT."
+
+paths:
+  model: "bot_detection_pipeline_v001.joblib"
+
+model:
+  features:
+    - "country_by_ip_address"
+    - "region_by_ip_address"
+    - "visitor_recognition_type"
+  positive_class: 1
+
+  # The binary model was trained with 1 representing NHT
+  NHT_CLASS_LABEL: 1
+
+training:
+  random_state: 42
+
+evaluation:
+  false_positive_cost: 50
+  false_negative_cost: 1

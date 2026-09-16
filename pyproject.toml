@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bot-or-not"
+version = "0.1.0"
+description = "API for classifying web traffic as NHT or HT."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.141,<1",
+    "joblib>=1.5,<2",
+    "lightgbm>=4.7,<5",
+    "pandas>=3,<4",
+    "pyyaml>=6,<7",
+    "scikit-learn>=1.9,<2",
+    "uvicorn>=0.52,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.28,<1",
+    "pytest>=9,<10",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+bot_or_not = [
+    "resources/*.yaml",
+    "resources/*.joblib",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

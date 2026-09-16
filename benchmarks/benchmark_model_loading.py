@@ -1,11 +1,11 @@
 from statistics import median
 from time import perf_counter
 
-import joblib
 import pandas as pd
 
-from app.config import MODEL_FEATURES, MODEL_PATH
-from app.prediction import pipeline
+from bot_or_not.artifacts import load_artifact
+from bot_or_not.config import MODEL_FEATURES, MODEL_PATH
+from bot_or_not.inference import pipeline
 
 
 NUMBER_OF_RUNS = 200
@@ -23,22 +23,23 @@ def create_input_data():
 
 
 def benchmark_model_loading(input_data):
-    """Load the model for every prediction."""
+    """Load and validate the artifact before every prediction."""
 
     for _ in range(WARMUP_RUNS):
-        model = joblib.load(MODEL_PATH)
-        model.predict_proba(input_data)
+        loaded_artifact = load_artifact(MODEL_PATH)
+        loaded_pipeline = loaded_artifact["pipeline"]
+        loaded_pipeline.predict_proba(input_data)
 
     latencies = []
 
     for _ in range(NUMBER_OF_RUNS):
         start = perf_counter()
 
-        model = joblib.load(MODEL_PATH)
-        model.predict_proba(input_data)
+        loaded_artifact = load_artifact(MODEL_PATH)
+        loaded_pipeline = loaded_artifact["pipeline"]
+        loaded_pipeline.predict_proba(input_data)
 
         latency_ms = (perf_counter() - start) * 1000
-
         latencies.append(latency_ms)
 
     return latencies
