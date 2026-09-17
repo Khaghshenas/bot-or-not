@@ -16,6 +16,9 @@ artifact = load_artifact(MODEL_PATH)
 pipeline = artifact["pipeline"]
 threshold = float(artifact["threshold"])
 
+if not 0 <= threshold <= 1:
+    raise ValueError(f"Threshold {threshold} is out of range [0, 1]")
+ 
 logger.info("Loaded model version %s with threshold %.3f", artifact["version"], threshold)
 
 
@@ -33,6 +36,9 @@ def predict_traffic(features: Mapping[str, Any]) -> dict[str, str | float]:
 
     probabilities = pipeline.predict_proba(input_data)[0]
     probability_nht = float(probabilities[nht_class_index])
+
+    if not 0 <= probability_nht <= 1:
+        raise RuntimeError(f"Model returned invalid probability: {probability_nht}")
 
     prediction = "NHT" if probability_nht >= threshold else "HT"
 
