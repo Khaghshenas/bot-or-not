@@ -1,61 +1,101 @@
 # Bot or Not API
 
-A machine learning application that classifies a web traffic log line as either human traffic (`HT`) or non-human traffic (`NHT`). 
+A machine learning application that classifies a web traffic log line as either human traffic (`HT`) or non-human traffic (`NHT`). The service packages a trained LightGBM pipeline, its decision threshold, and its runtime configuration with a FastAPI application.
 
-Because the dataset cannot be shared, this project focuses mainly on deployment. The model-development process—including data preprocessing, training, evaluation, and model selection—is completed in a Jupyter notebook. The final LightGBM classifier is exported as bot_detection_pipeline.joblib.
-
-The deployment code included in this project loads the saved model, processes incoming web traffic log lines, generates predictions, and returns the corresponding HT or NHT classification through the application interface.
-
-## Assumptions
-
-The supplied dataset contains several user-agent classes (ua_agent_class). For the binary API model, the classes are mapped as follows:
-
-- `Browser`, `Browser Webview`, and `Mobile App` -> `HT`
-- All remaining classes -> `NHT`
-
-I assumed `Mobile App` is HT and `Special` is NHT. This should be confirmed with the data owner because the business definition of NHT is not included in the dataset.
-
-## Solution overview
-
-The solution consists of:
-
-- A Jupyter notebook for model development and evaluation.
-- A scikit-learn pipeline containing one-hot encoding and a LightGBM classifier.
-- A FastAPI application with health and prediction endpoints.
-- Swagger UI for interactive API documentation.
-- API and model tests implemented with `pytest` and FastAPI's `TestClient`.
-- A benchmark measuring the model-loading optimization.
-- Docker packaging for reproducible local execution.
+> The source dataset cannot be published. The repository therefore includes the model-development notebooks and the deployable model artifact, but not the raw data.
 
 
-## Model summary
+## What this project demonstrates
 
-The deployed model is a binary LightGBM classifier using:
+- Session-aware train, validation, and test splitting to reduce leakage between requests from the same session.
+- A scikit-learn pipeline that combines one-hot encoding with a LightGBM classifier.
+- Threshold selection based on explicit false-positive and false-negative costs.
+- A versioned model artifact containing the fitted pipeline, selected threshold, version, and metadata.
+- A FastAPI inference service with validation, controlled error responses, timing headers, and interactive OpenAPI documentation.
+- Python packaging with a `src/` layout and runtime resources included through `pyproject.toml`.
+- Automated API, model-artifact, and threshold-evaluation tests.
+- Docker packaging and a benchmark comparing per-request model loading with model reuse.
+
+## Target definition and assumptions
+
+The source dataset contains multiple `ua_agent_class` values. They are mapped to the binary target as follows:
+
+- `Browser`, `Browser Webview`, and `Mobile App` -> `HT` (`0`)
+- All other classes -> `NHT` (`1`)
+
+This mapping assumes that `Mobile App` represents human traffic and `Special` represents non-human traffic. Those assumptions should be confirmed with the data owner before using the model for business decisions.
+
+
+## Model
+
+The deployed classifier uses three categorical features:
 
 - `country_by_ip_address`
 - `region_by_ip_address`
 - `visitor_recognition_type`
 
-Requests are split by `session_id` to prevent the same session from appearing in both training and test data. Preprocessing and classification are stored in one pipeline to keep training and inference consistent.
+Requests are split by `session_id`, keeping a session entirely within one data split. Preprocessing and classification are stored in a single pipeline so training and inference apply the same transformations. Unknown categories are ignored by the one-hot encoder rather than causing inference failures.
+
+The packaged artifact is version `v001` and contains:
+
+- the fitted preprocessing and LightGBM pipeline;
+- the selected NHT decision threshold;
+- artifact version and training metadata.
+
+The current threshold is `0.90`. A request is classified as `NHT` when its estimated NHT probability is at least this threshold; otherwise it is classified as `HT`.
+
+### Recorded model comparison
 
 | Model | Accuracy | Macro F1 | ROC-AUC | PR-AUC |
 |:---|---:|---:|---:|---:|
 | KNN | 0.982 | 0.980 | 0.984 | 0.974 |
 | LightGBM | 0.982 | 0.981 | 0.994 | 0.985 |
 
-LightGBM was selected for deployment because it provides stronger probability ranking and better inference scaling than KNN.
+LightGBM was selected because it produced stronger probability-ranking metrics and offers better inference scaling than KNN. See the notebooks for the complete development and analysis workflow:
 
-See [`notebooks/bot_or_not_lightgbm.ipynb`](notebooks/bot_or_not_lightgbm.ipynb) for data exploration, target definition, model training, and evaluation.
+- [`01_data_preparation_and_lightgbm_training.ipynb`](notebooks/01_data_preparation_and_lightgbm_training.ipynb)
+- [`02_error_analysis_and_ablation_experiments.ipynb`](notebooks/02_error_analysis_and_ablation_experiments.ipynb)
+
+## Project structure
+
+```text
+.
+├── benchmarks/
+│   └── benchmark_model_loading.py
+├── notebooks/
+│   ├── 01_data_preparation_and_lightgbm_training.ipynb
+│   └── 02_error_analysis_and_ablation_experiments.ipynb
+├── src/bot_or_not/
+│   ├── api/
+│   │   ├── main.py
+│   │   └── schemas.py
+│   ├── resources/
+│   │   ├── bot_detection_pipeline_v001.joblib
+│   │   └── config.yaml
+│   ├── artifacts.py
+│   ├── config.py
+│   ├── data.py
+│   ├── evaluation.py
+│   ├── features.py
+│   ├── inference.py
+│   └── training.py
+├── tests/
+├── Dockerfile
+└── pyproject.toml
+```
+
+`pyproject.toml` defines the installable package and its dependencies. The YAML configuration and serialized model are package data under `src/bot_or_not/resources/`, so they are available after installation instead of depending on the original repository layout.
+
 
 ## API
 
 ### Endpoints
 
 | Method | Endpoint | Description |
-| --- | --- | --- |
-| `GET` | `/health` | Confirms that the service is running. |
-| `POST` | `/predict` | Returns the predicted traffic type and NHT probability for one log line. |
-| `GET` | `/docs` | Interactive Swagger UI. |
+|:---|:---|:---|
+| `GET` | `/health` | Confirms that the API process is running. |
+| `POST` | `/predict` | Classifies one web-traffic log line. |
+| `GET` | `/docs` | Opens the interactive Swagger UI. |
 
 ### Prediction request
 
@@ -71,6 +111,8 @@ See [`notebooks/bot_or_not_lightgbm.ipynb`](notebooks/bot_or_not_lightgbm.ipynb)
 }
 ```
 
+`country_by_ip_address`, `region_by_ip_address`, and `referrer_without_parameters` may be `null` or omitted. The other fields are required by the API schema. Only the three model features listed above are passed to the classifier.
+
 ### Prediction response
 
 ```json
@@ -80,21 +122,36 @@ See [`notebooks/bot_or_not_lightgbm.ipynb`](notebooks/bot_or_not_lightgbm.ipynb)
 }
 ```
 
-## Run locally
+Successful prediction responses also include:
 
-### Prerequisites
+- `X-Model-Time-Ms`: feature preparation and model-inference time;
+- `X-Request-Time-Ms`: total server-side request time;
+- `X-App-Version`: API version from the packaged configuration.
+
+Invalid request bodies return FastAPI's `422` validation response. Unexpected prediction errors are logged by the server and returned to clients as a controlled `500` response without exposing internal exception details.
+
+
+## Local development
+
+### Requirements
 
 - Python 3.11 or later
+- Git
 
-### Installation
+Clone the repository and enter it:
 
-From the project root:
+```bash
+git clone https://github.com/Khaghshenas/bot-or-not.git
+cd bot-or-not
+```
+
+Create a virtual environment:
 
 ```bash
 python -m venv .venv
 ```
 
-Activate the environment:
+Activate it:
 
 ```bash
 # macOS/Linux
@@ -104,123 +161,89 @@ source .venv/bin/activate
 .venv\Scripts\Activate.ps1
 ```
 
-Install the dependencies:
+Install the package in editable mode with its development dependencies:
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 ```
 
-### Start the API
+Start the API:
 
 ```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+python -m uvicorn bot_or_not.api.main:app --host 0.0.0.0 --port 8000
 ```
 
-Open the interactive documentation at [http://localhost:8000/docs](http://localhost:8000/docs).
+Open:
+
+- Health check: <http://localhost:8000/health>
+- Swagger UI: <http://localhost:8000/docs>
 
 ## Tests
 
-Run the automated tests from the project root:
+Run the complete test suite from the repository root:
 
 ```bash
 python -m pytest -v
 ```
 
-The current test suite checks:
+The tests cover:
 
-- Health and prediction endpoints.
-- Response schema and observability headers.
-- Missing, invalid, and unknown input values.
-- Controlled internal-error responses.
-- Deterministic predictions and concurrent requests.
-- Model artifact loading and prediction consistency.
+- health and prediction endpoints;
+- request validation and controlled error responses;
+- response structure and observability headers;
+- deterministic and concurrent predictions;
+- artifact structure, threshold validity, and model probabilities;
+- threshold metrics and invalid evaluation inputs.
 
-## API performance optimization
+## Model-loading benchmark
 
-The serialized **model pipeline is loaded once when the application starts** rather than once per request. This removes repeated disk I/O and deserialization from the prediction path.
+The API imports and validates the model artifact once when the inference module starts, then reuses the loaded pipeline for every request. The benchmark compares that approach with loading and validating the artifact before every prediction.
 
-### Benchmark methodology
-
-I compared two inference approaches:
-
-- **Baseline:** load and deserialize the model before every prediction.
-- **Optimized:** load the model once at application startup and reuse it for every prediction.
-
-The benchmark used:
-
-- 10 warm-up runs.
-- 200 measured predictions.
-- One input record per prediction.
-- Median and p95 latency.
-- Local execution on Windows.
-
-The benchmark measures the model prediction path, not complete HTTP request latency. Results may vary depending on hardware and system load.
-
-Run the benchmark from the project root:
+Run it from the repository root:
 
 ```bash
 python -m benchmarks.benchmark_model_loading
 ```
 
-### Benchmark results
-
-| Metric | Load model per prediction | Reuse loaded model |
-|:---|---:|---:|
-| Median latency | 19.03 ms | 6.83 ms |
-| P95 latency | 24.65 ms | 7.91 ms |
-
-In this run, reusing the loaded model reduced median latency by **64.1%**, reduced p95 latency by **67.9%**, and provided a **2.8x speedup**.
-
-Across repeated local runs, the median latency reduction was approximately **57–64%**, with a **2.3–2.8x speedup**. This variation is expected in a local benchmark because of operating-system scheduling and background processes.
-
-## Technical observability
-
-Successful responses expose:
-
-- `X-Model-Time-Ms`: feature preparation and model inference latency.
-- `X-Request-Time-Ms`: total server-side request latency.
-- `X-App-Version`: application version.
-
-The distinction helps determine whether latency comes from model inference or API overhead. 
+The benchmark performs 10 warm-up runs and 200 measured predictions for each approach, then reports median and p95 latency. It measures the Python model-prediction path rather than complete HTTP latency, so results depend on the operating system, hardware, Python environment, and background load.
 
 ## Docker
 
-The API can be built and run locally with Docker.
-
-### Prerequisite
-
-Install and start Docker Desktop.
-
-### Build the image
-
-From the project root, run:
+Build the image from the repository root:
 
 ```bash
 docker build -t bot-or-not-api .
 ```
 
-### Run the container
+Run the container:
 
 ```bash
 docker run --rm -p 8000:8000 bot-or-not-api
 ```
 
-Port `8000` on the local machine is mapped to port `8000` inside the container.
+The image installs the project from `pyproject.toml`, including the packaged configuration and model artifact. The container listens on port `8000` by default. A different internal port can be supplied with `PORT`:
 
-Verify the service at:
+```bash
+docker run --rm -e PORT=8080 -p 8080:8080 bot-or-not-api
+```
 
-- Health endpoint: [http://localhost:8000/health](http://localhost:8000/health)
-- Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
+## Reproducibility notes
 
-## Reproducibility
+- Training uses a fixed random seed of `42`.
+- Splits are stratified and grouped by `session_id`.
+- The deployed artifact stores the preprocessing pipeline and classifier together.
+- The selected decision threshold and artifact metadata are stored beside the fitted pipeline.
+- Application configuration and the model artifact are included as package resources.
+- Runtime and development dependencies are declared in `pyproject.toml`.
 
-The model-training workflow is documented in `notebooks/bot_or_not_lightgbm.ipynb`. The notebook uses a fixed random seed and saves the complete preprocessing and prediction pipeline to `models/bot_detection_pipeline.joblib`.
+Because the raw dataset is private, the training notebooks cannot be rerun from this repository alone. The included artifact allows the API and inference tests to run without the training data.
 
 ## Live demo
 
-A demonstration deployment is available at:
+A demonstration deployment is available on Render:
 
-- Health check: [https://bot-or-not-fn7i.onrender.com/health](https://bot-or-not-fn7i.onrender.com/health)
-- Swagger UI: [https://bot-or-not-fn7i.onrender.com/docs](https://bot-or-not-fn7i.onrender.com/docs)
+- Health check: <https://bot-or-not-fn7i.onrender.com/health>
+- Swagger UI: <https://bot-or-not-fn7i.onrender.com/docs>
 
-The service uses Render's free tier and may require approximately one minute to start after a period of inactivity.
+The service uses Render's free tier and may take approximately one minute to start after a period of inactivity.

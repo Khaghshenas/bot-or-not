@@ -1,7 +1,7 @@
 
 import pytest
 
-from build.lib.bot_or_not.evaluation import evaluate_thresholds
+from bot_or_not.evaluation import evaluate_thresholds
 
 
 def test_evaluate_thresholds_basic():
