@@ -19,8 +19,10 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Data
+# Data and generated outputs
 data/
+/models/
+/runs/
 *.csv
 
 # build

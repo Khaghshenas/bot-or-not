@@ -6,8 +6,10 @@ __pycache__
 *.pyc
 *.ipynb
 
-data
-notebooks
-tests
-benchmarks
+data/
+models/
+runs/
+notebooks/
+tests/
+benchmarks/
 README.md

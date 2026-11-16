@@ -10,7 +10,9 @@ A machine learning application that classifies a web traffic log line as either 
 - Session-aware train, validation, and test splitting to reduce leakage between requests from the same session.
 - A scikit-learn pipeline that combines one-hot encoding with a LightGBM classifier.
 - Threshold selection based on explicit false-positive and false-negative costs.
-- A versioned model artifact containing the fitted pipeline, selected threshold, version, and metadata.
+- Command-line training, with dataset validation, session-leakage checks, validation-based threshold selection, and held-out
+  test evaluation.
+- Training-run metadata, dataset fingerprinting, artifact reload verification, and explicit completion markers.
 - A FastAPI inference service with validation, controlled error responses, timing headers, and interactive OpenAPI documentation.
 - Python packaging with a `src/` layout and runtime resources included through `pyproject.toml`.
 - Automated API, model-artifact, and threshold-evaluation tests.
@@ -78,9 +80,11 @@ LightGBM was selected because it produced stronger probability-ranking metrics a
 │   ├── evaluation.py
 │   ├── features.py
 │   ├── inference.py
+│   ├── train.py
 │   └── training.py
 ├── tests/
 ├── Dockerfile
+├── Dockerfile.training
 └── pyproject.toml
 ```
 
@@ -178,6 +182,177 @@ Open:
 
 - Health check: <http://localhost:8000/health>
 - Swagger UI: <http://localhost:8000/docs>
+
+## Training
+
+Training can run independently of Jupyter through the `bot_or_not.train` module. Notebooks remain available for exploration,
+visualization, and error analysis.
+
+### Responsibilities
+
+- `training.py` defines and fits the preprocessing/classifier pipeline.
+- `train.py` coordinates data loading, validation, splitting, training,
+  threshold selection, evaluation, and output creation.
+- The FastAPI application loads a previously saved artifact for inference.
+  Starting the API does not initiate training.
+
+### Prerequisites
+
+The source dataset is private and is not included in this repository.
+Supply an authorized local CSV snapshot.
+
+The CSV must contain:
+
+| Column | Requirement |
+|:---|:---|
+| `country_by_ip_address` | String values or missing values |
+| `region_by_ip_address` | String values or missing values |
+| `visitor_recognition_type` | String values or missing values |
+| `session_id` | Non-null, non-empty session identifiers |
+| `ua_agent_class` | Non-null, non-empty source labels |
+
+All columns must exist, even when missing feature values are permitted. Feature columns are controlled by `model.features` in the packaged `config.yaml`; update these requirements if that configuration changes.
+
+CSV parsing uses pandas' default type and missing-value inference. A feature column parsed as numeric rather than string will fail validation.
+
+The training job maps `Browser`, `Browser Webview`, and `Mobile App` to human traffic (`0`), and all other non-null source labels to non-human traffic (`1`). This mapping must be confirmed with the data owner. Unknown source-label values are not currently rejected.
+
+Provide enough sessions and class examples for the grouped split to produce both target classes in each of the training, validation, and test sets. The job rejects splits that do not contain both classes.
+
+### Start a training run
+
+From the repository root:
+
+```bash
+python -m bot_or_not.train \
+  --data-path data/clickdata.csv \
+  --output-dir runs/run-001 \
+  --model-version v002
+```
+
+Show command-line help:
+
+```bash
+python -m bot_or_not.train --help
+```
+
+| Argument | Meaning |
+|:---|:---|
+| `--data-path` | Path to a local training CSV |
+| `--output-dir` | New directory for this run's outputs |
+| `--model-version` | Non-empty candidate version stored in the artifact |
+
+Relative paths are resolved from the current working directory.
+The output directory must not already exist. Use a fresh directory for
+each run or retry.
+
+The version argument labels the artifact; it does not enforce uniqueness
+across different output directories.
+
+### Training workflow
+
+The job:
+
+1. Calculates the input file's SHA-256 fingerprint.
+2. Validates required columns, session identifiers, labels, and feature types.
+3. Constructs the binary target using the existing source-label mapping.
+4. Creates approximately 60% training, 20% validation, and 20% test splits,
+   keeping sessions separate.
+5. Checks that every split contains both target classes and that no session
+   appears in multiple splits.
+6. Fits preprocessing and LightGBM using the training split only.
+7. Evaluates thresholds from `0.05` through `0.95`, in increments of `0.05`,
+   using validation labels and validation probabilities.
+8. Selects the threshold with the lowest configured validation business cost.
+9. Evaluates the fixed candidate on the held-out test split.
+10. Saves the artifact, reloads it, and verifies that its predictions,
+    threshold, and version are preserved.
+11. Saves evaluation reports and writes a completion marker.
+
+Split proportions are approximate because sessions remain intact.
+
+The random seed, model features, and false-positive/false-negative costs come from the packaged configuration. Model hyperparameters are defined in `training.py`.
+
+Test data is not used to fit preprocessing, fit the classifier, or select the threshold. Avoid repeatedly tuning the model against reported test results; maintain a suitable held-out evaluation policy.
+
+### Output files
+
+A successful run produces:
+
+```text
+runs/run-001/
+├── model.joblib
+├── metrics.json
+├── validation_thresholds.csv
+└── SUCCESS
+```
+
+| File | Contents |
+|:---|:---|
+| `model.joblib` | Fitted preprocessing/classifier pipeline, threshold, version, and metadata |
+| `metrics.json` | Run metadata, test metrics, completion timestamp, and reload-verification status |
+| `validation_thresholds.csv` | Validation metrics and business cost for each candidate threshold |
+| `SUCCESS` | Completion marker written after artifact verification and report creation |
+
+Metadata records the dataset SHA-256, model version, start time, random seed, feature names, split strategy and sizes configured error costs, and installed pandas, scikit-learn, LightGBM, and joblib versions.
+
+The test report includes the selected threshold, confusion-matrix counts, precision, recall, false-positive rate, specificity, F1, predicted-positive rate, and business cost.
+
+### Logs and failure handling
+
+The job logs major stages and the final test metrics to the process log.
+
+An exception is logged and re-raised, giving the process a nonzero exit status. Failures after output-directory creation may leave partial files.
+
+Downstream consumers must require the `SUCCESS` marker before using a run's outputs. Use a new output directory when retrying a failed run.
+
+`SUCCESS` confirms execution and artifact verification. It does not indicate that the candidate meets business acceptance criteria.
+
+### Deployment is separate
+
+Training does not replace the model currently loaded by the API and does not deploy automatically.
+
+The current API loads its model from packaged resources, as configured in `src/bot_or_not/resources/config.yaml`.
+
+To release an approved candidate with this design:
+
+1. Review evaluation results against explicit release criteria.
+2. Copy the approved `model.joblib` into
+   `src/bot_or_not/resources/` using an appropriate versioned filename.
+3. Update `paths.model` in the packaged configuration.
+4. Run the tests against the updated artifact.
+5. Rebuild and deploy the inference image.
+6. Retain the previous image for rollback.
+
+Use compatible dependency versions for training and inference. Recording versions helps trace a run; it does not itself lock the environment.
+
+### Training with Docker
+
+Build the training image from the repository root:
+
+```bash
+docker build \
+  -f Dockerfile.training \
+  -t bot-or-not-training .
+```
+
+Create a host output directory and start a training container:
+
+```bash
+mkdir -p runs
+
+docker run --rm \
+  -v "$PWD/data:/data:ro" \
+  -v "$PWD/runs:/runs" \
+  bot-or-not-training \
+  --data-path /data/clickdata.csv \
+  --output-dir /runs/run-001 \
+  --model-version v002
+```
+
+These mount examples use Bash syntax. Input data is mounted read-only, and the output mount preserves results after the container exits.
+
+`Dockerfile.training` starts the training module instead of Uvicorn. The container exits when training finishes. 
 
 ## Tests
 
